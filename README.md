@@ -4,171 +4,185 @@
 ![.NET](https://img.shields.io/badge/.NET-8.0-512bd4)
 ![Release](https://img.shields.io/badge/release-1.0.6-16a34a)
 ![License](https://img.shields.io/badge/license-MIT-111827)
-⭐ If ProxyPilot helps you, please star the repository after it is published.
 
-ProxyPilot is a Windows desktop tool for process-level network routing when you are already using a local proxy for scientific internet access.
+如果 ProxyPilot 对你有帮助，欢迎给这个项目点一个 Star。
 
-Typical use case:
+ProxyPilot 是一个 Windows 桌面工具，用来在你已经开启“梯子”或本机代理的情况下，按进程控制网络分流。
 
-- Your browser needs `PROXY` because you use ChatGPT, Google, YouTube, GitHub, or other overseas services.
-- WeChat, Baidu Netdisk, QQ, local games, or China-only apps do not need proxy traffic, so you set them to `DIRECT`.
-- Some app should not access the network at all, so you set it to `REJECT`.
+最典型的场景是：
 
-ProxyPilot does not build its own proxy protocol, does not inject DLLs, and does not install a custom WFP driver. It manages a bundled `mihomo.exe` and generates process rules for mihomo TUN mode.
+- 浏览器需要走 `PROXY`，因为你要访问 ChatGPT、Google、YouTube、GitHub 等服务。
+- 微信、百度网盘、QQ、国内游戏或国内软件不需要走梯子，所以设置为 `DIRECT` 直连。
+- 某些软件不希望联网，可以设置为 `REJECT` 阻断。
 
-## What It Does
+ProxyPilot 不提供代理节点，不自研代理内核，不做 DLL 注入，也不安装自定义 WFP 驱动。它通过内置的 `mihomo.exe` 和 mihomo TUN + process 规则来实现按进程分流。
 
-ProxyPilot makes all supported traffic enter ProxyPilot first, then applies per-process rules:
+## 核心链路
+
+ProxyPilot 的目标是让流量先进入 ProxyPilot，再按进程规则决定走向：
 
 ```text
-Chrome / browser -> ProxyPilot -> upstream proxy -> ChatGPT
-WeChat           -> ProxyPilot -> DIRECT
-Baidu Netdisk    -> ProxyPilot -> DIRECT
-Blocked app      -> ProxyPilot -> REJECT
+Chrome / 浏览器 -> ProxyPilot -> 上游代理 -> ChatGPT
+微信             -> ProxyPilot -> DIRECT
+百度网盘         -> ProxyPilot -> DIRECT
+需要阻断的软件   -> ProxyPilot -> REJECT
 ```
 
-The upstream proxy can be an existing local proxy application such as:
+上游代理可以是你本机已经运行的代理工具，例如：
 
 - ShadowsocksR / SSR
 - Clash
 - Clash Verge / Clash Verge Rev
 - v2rayN
 - sing-box
-- Other local HTTP/SOCKS proxy tools that expose a local port
+- 其它提供本地 HTTP / SOCKS 端口的代理工具
 
-ProxyPilot detects common local proxy ports automatically and checks whether the upstream proxy can actually reach Google / YouTube. This helps distinguish "ProxyPilot rule did not work" from "the upstream proxy itself is unavailable".
+ProxyPilot 会自动识别常见本地代理端口，并检测这个上游代理端口是否真的能访问 Google / YouTube，避免用户误以为“规则没生效”，实际却是“上游代理本身不可用”。
 
-## Features
+## 功能特性
 
-- Process list grouped by application, with icon, PID, path, and rule.
-- Three rule actions:
-  - `PROXY`: send the process through the upstream proxy group.
-  - `DIRECT`: connect directly without the upstream proxy.
-  - `REJECT`: block the process.
-- Built-in `mihomo.exe`; users do not need to download mihomo separately.
-- mihomo process start / stop / restart.
-- mihomo API hot reload.
-- TUN configuration generation.
-- Upstream proxy detection and health check.
-- TUN loopback risk detection.
-- Connection inspection: total connections, mihomo-managed connections, upstream connections, and suspected direct connections.
-- Tray mode.
-- Chinese UI by default, with English switch.
-- Self-contained Windows x64 release.
+- 进程列表按应用聚合，显示图标、PID、路径、规则和连接信息。
+- 三种规则：
+  - `PROXY`：通过上游代理组。
+  - `DIRECT`：不经过上游代理，直接连接。
+  - `REJECT`：阻断该进程流量。
+- 内置 `mihomo.exe`，用户不需要单独下载 mihomo。
+- 支持启动 / 停止 / 重启 mihomo。
+- 支持 mihomo API 热重载。
+- 自动生成 TUN 配置。
+- 自动识别本机上游代理。
+- 上游代理健康检查。
+- TUN 回环风险检测。
+- 连接检测：当前连接数、mihomo 接管数、上游连接数、疑似直连数。
+- 托盘常驻。
+- 默认中文界面，可切换英文。
+- Windows x64 self-contained 打包。
 
-## Download
+## 下载
 
-Go to the `release/` folder and download:
+进入 `release/` 文件夹，下载：
 
 ```text
 ProxyPilot-1.0.6-win-x64.zip
 ```
 
-Unzip it and run:
+解压后运行：
 
 ```text
 ProxyPilot.exe
 ```
 
-No separate .NET runtime installation is required. No separate mihomo download is required.
+不需要单独安装 .NET 运行时。
+不需要单独下载 mihomo。
+压缩包里已经包含：
 
-## Requirements
+```text
+ProxyPilot.exe
+resources/mihomo.exe
+resources/ProxyPilot.ico
+```
 
-- Windows 10 or Windows 11
-- Administrator permission for TUN mode
-- An upstream proxy if you want `PROXY` traffic to reach overseas services
+## 系统要求
 
-ProxyPilot itself is not a proxy service provider. It routes traffic to your existing upstream proxy.
+- Windows 10 或 Windows 11
+- 使用 TUN 时需要管理员权限
+- 如果希望 `PROXY` 能访问外网，需要你自己已有可用的上游代理
 
-## Quick Start
+ProxyPilot 不是机场客户端，也不提供代理节点。它负责把不同进程分流到你已有的本机代理或直连。
 
-1. Start your existing proxy tool first, for example SSR or Clash.
-2. Make sure your upstream proxy can normally access ChatGPT / Google / YouTube by itself.
-3. Run `ProxyPilot.exe` as administrator.
-4. ProxyPilot will start the bundled `mihomo.exe` automatically.
-5. Click `Detect Proxy` / `识别代理` if the upstream proxy was not detected.
-6. Click `Check Upstream` / `检测上游` to verify whether the upstream proxy can reach Google / YouTube.
-7. In the process list:
-   - Set your browser, for example `chrome.exe`, to `PROXY`.
-   - Set `WeChat.exe`, Baidu Netdisk, or other China-only apps to `DIRECT`.
-   - Set unwanted network apps to `REJECT`.
-8. Click `Apply` / `应用规则`.
-9. If Chrome has old connections, restart Chrome for the most reliable switch.
+## 快速开始
 
-## Example Workflow
+1. 先启动你已有的代理工具，例如 SSR 或 Clash。
+2. 确认这个代理工具本身可以访问 ChatGPT / Google / YouTube。
+3. 以管理员身份运行 `ProxyPilot.exe`。
+4. ProxyPilot 会自动启动内置的 `mihomo.exe`。
+5. 如果没有识别到上游代理，点击 `识别代理`。
+6. 点击 `检测上游`，确认上游代理是否可用。
+7. 在进程列表里设置规则：
+   - 浏览器，例如 `chrome.exe`，设置为 `PROXY`。
+   - 微信、百度网盘等国内软件设置为 `DIRECT`。
+   - 不希望联网的软件设置为 `REJECT`。
+8. 点击 `应用规则`。
+9. 如果 Chrome 仍然沿用旧连接，重启 Chrome 后再测试，结果会更可靠。
 
-You are using SSR. The SSR local proxy port is `127.0.0.1:20088`.
+## 使用示例
 
-You want:
+假设你正在使用 SSR，SSR 的本地代理端口是：
+
+```text
+127.0.0.1:20088
+```
+
+你希望：
 
 ```text
 Chrome       -> PROXY  -> SSR 20088 -> ChatGPT
-WeChat       -> DIRECT -> local direct connection
-BaiduNetdisk -> DIRECT -> local direct connection
+WeChat       -> DIRECT -> 本机直连
+BaiduNetdisk -> DIRECT -> 本机直连
 ```
 
-In ProxyPilot:
+在 ProxyPilot 中：
 
-1. Confirm upstream shows something like `127.0.0.1:20088`.
-2. Set `Google Chrome` to `PROXY`.
-3. Set `WeChat` to `DIRECT`.
-4. Set `Baidu Netdisk` to `DIRECT`.
-5. Click `Apply`.
+1. 确认上游代理显示为 `127.0.0.1:20088`。
+2. 把 `Google Chrome` 设置为 `PROXY`。
+3. 把 `WeChat` 设置为 `DIRECT`。
+4. 把 `Baidu Netdisk` 设置为 `DIRECT`。
+5. 点击 `应用规则`。
 
-The chain should be:
+最终链路应该类似：
 
 ```text
 Chrome -> ProxyPilot -> SSR 20088
 WeChat -> ProxyPilot -> DIRECT
 ```
 
-## Meaning of Rules
+## 规则说明
 
 ### PROXY
 
-`PROXY` means the process is routed to ProxyPilot's upstream proxy group.
+`PROXY` 表示该进程会走 ProxyPilot 的上游代理组。
 
-It does not mean "guaranteed access to the internet". If SSR / Clash / your upstream node is broken, `PROXY` will also fail. Use the upstream health check to confirm the upstream proxy itself is available.
+它不等于“保证能访问外网”。如果 SSR / Clash / 节点本身坏了，`PROXY` 同样会失败。遇到问题时请先看“上游健康检查”。
 
 ### DIRECT
 
-`DIRECT` means ProxyPilot asks mihomo to connect directly, without the upstream proxy.
+`DIRECT` 表示 ProxyPilot 会让 mihomo 对该进程直连，不走上游代理。
 
-If another proxy tool is running in global mode outside ProxyPilot, that external tool may still affect traffic. For the cleanest result, let traffic enter ProxyPilot first and avoid competing global proxy/TUN tools.
+如果你同时开了其它全局代理或其它 TUN 工具，它们仍然可能在 ProxyPilot 之外影响网络。为了结果清晰，建议让流量优先进入 ProxyPilot，不要同时开多个全局接管工具。
 
 ### REJECT
 
-`REJECT` blocks matching process traffic.
+`REJECT` 表示阻断匹配进程的流量。
 
-## Why Administrator Permission Is Needed
+## 为什么需要管理员权限
 
-ProxyPilot uses mihomo TUN mode. TUN allows ProxyPilot to handle traffic from applications that ignore the Windows system proxy, such as download tools or some game launchers.
+ProxyPilot 使用 mihomo TUN 模式。TUN 能接管那些不遵守 Windows 系统代理的软件，例如部分下载工具、启动器或游戏程序。
 
-On Windows, TUN routing usually needs administrator permission.
+在 Windows 上，启用 TUN 通常需要管理员权限。
 
-## Upstream Health Check
+## 上游代理健康检查
 
-ProxyPilot can detect a local proxy port, but detecting a port is not enough. A local port can be open while the proxy node is dead.
+ProxyPilot 能识别本机代理端口，但“端口存在”不代表“代理可用”。
 
-The upstream health check verifies whether the detected upstream port can access Google / YouTube through HTTP/SOCKS tunneling.
+所以 ProxyPilot 会直接通过上游端口检测 Google / YouTube 是否可达。
 
-If the UI says upstream is unavailable, fix SSR / Clash / node subscription first.
+如果界面显示“上游代理不可用”，请先修复 SSR / Clash / 节点订阅，而不是先怀疑进程规则。
 
-## Chrome Hot Reload Notes
+## Chrome 热重载说明
 
-Chrome keeps connection pools, background Network Service connections, and QUIC / HTTP3 sessions.
+Chrome 会保留连接池、后台 Network Service、QUIC / HTTP3 连接。
 
-After changing a Chrome rule:
+修改 Chrome 规则后：
 
-- New connections should follow the new rule.
-- Existing connections may not switch immediately.
-- Restarting Chrome is the most reliable way to confirm a route change.
+- 新连接通常会按新规则走。
+- 旧连接不一定立刻切换。
+- 重启 Chrome 是最可靠的验证方式。
 
-ProxyPilot includes a selected-process restart helper for this reason.
+ProxyPilot 也提供了“重启选中进程”的辅助按钮。
 
-## Files Created at Runtime
+## 运行时文件
 
-ProxyPilot creates runtime files next to the executable:
+ProxyPilot 会在 exe 所在目录创建运行时文件：
 
 ```text
 data/settings.json
@@ -178,58 +192,48 @@ config/config.process-manager.yaml
 config/mihomo-generated.yaml
 ```
 
-These files are user-specific and should not be committed as source code.
+这些是用户本机配置，不应该提交到源码仓库。
 
-## Build From Source
+## 从源码构建
 
-Install .NET 8 SDK, then run:
+安装 .NET 8 SDK 后执行：
 
 ```powershell
 dotnet restore .\ProcessProxyManager.slnx
 dotnet build .\ProcessProxyManager.slnx -c Release
 ```
 
-Create a self-contained release zip:
+打包 self-contained 版本：
 
 ```powershell
 .\scripts\package.ps1 -Version 1.0.6
 ```
 
-The packaged build includes:
+## 项目结构
 
 ```text
-ProxyPilot.exe
-resources/mihomo.exe
-resources/ProxyPilot.ico
+ProcessProxyManager.App/      WPF 桌面界面
+ProcessProxyManager.Core/     规则、设置、JSON 存储、进程扫描
+ProcessProxyManager.Mihomo/   mihomo 配置、进程管理、API 客户端
+ProcessProxyManager.Native/   Windows 代理识别和连接检测
+resources/                    内置 mihomo.exe
+scripts/                      打包脚本
+release/                      可直接下载使用的压缩包
 ```
 
-## Project Structure
+## 当前限制
 
-```text
-ProcessProxyManager.App/      WPF desktop UI
-ProcessProxyManager.Core/     rules, settings, JSON stores, process scanning
-ProcessProxyManager.Mihomo/   mihomo config, process manager, API client
-ProcessProxyManager.Native/   Windows proxy detection and connection inspection
-resources/                    bundled mihomo.exe
-scripts/                      packaging script
-release/                      ready-to-download release zip
-```
+- ProxyPilot 不提供代理节点。
+- ProxyPilot 不承诺 100% 无泄漏。
+- 有些连接可能是本地连接、局域网连接、系统连接，不能简单等同于代理失败。
+- Chrome / Chromium 浏览器改规则后可能需要重启。
+- 同时运行多个 TUN / 全局代理工具会让路由变复杂。
 
-## Limitations
+## Star 记录
 
-- ProxyPilot does not provide proxy nodes.
-- ProxyPilot does not guarantee 100% no-leak networking.
-- Some traffic may be local, LAN, system-level, or already established before a rule switch.
-- Chrome and Chromium-based browsers may need restart after rule changes.
-- Running multiple TUN/global proxy tools at the same time can create confusing routes.
-
-## Star Record
-
-This table can be updated after the project is published on GitHub.
-
-| Date | Stars | Note |
+| 日期 | Stars | 备注 |
 | --- | ---: | --- |
-| 2026-07-09 | 0 | Initial public-ready 1.0.6 package |
+| 2026-07-09 | 0 | 初始公开版 1.0.6 |
 
 ## License
 
