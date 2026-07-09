@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="ProcessProxyManager.App/ProcessProxyManager.App.csproj" />
+  <Project Path="ProcessProxyManager.Core/ProcessProxyManager.Core.csproj" />
+  <Project Path="ProcessProxyManager.Mihomo/ProcessProxyManager.Mihomo.csproj" />
+  <Project Path="ProcessProxyManager.Native/ProcessProxyManager.Native.csproj" />
+</Solution>
