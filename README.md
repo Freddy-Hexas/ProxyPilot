@@ -7,6 +7,8 @@
 
 如果 ProxyPilot 对你有帮助，欢迎给这个项目点一个 Star。
 
+**直接下载：** [ProxyPilot-1.0.6-win-x64.zip](https://github.com/Freddy-Hexas/ProxyPilot/raw/main/release/ProxyPilot-1.0.6-win-x64.zip)
+
 ProxyPilot 是一个 Windows 桌面工具，用来在你已经开启“梯子”或本机代理的情况下，按进程控制网络分流。
 
 最典型的场景是：
@@ -60,7 +62,11 @@ ProxyPilot 会自动识别常见本地代理端口，并检测这个上游代理
 
 ## 下载
 
-进入 `release/` 文件夹，下载：
+直接下载：
+
+[ProxyPilot-1.0.6-win-x64.zip](https://github.com/Freddy-Hexas/ProxyPilot/raw/main/release/ProxyPilot-1.0.6-win-x64.zip)
+
+或者进入 `release/` 文件夹，下载：
 
 ```text
 ProxyPilot-1.0.6-win-x64.zip
