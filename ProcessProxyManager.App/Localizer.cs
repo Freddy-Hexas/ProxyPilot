@@ -11,7 +11,7 @@ public static class Localizer
 
     private static readonly IReadOnlyDictionary<string, string> Zh = new Dictionary<string, string>
     {
-        ["VersionLabel"] = "\u7248\u672c\uff1a1.0.6",
+        ["VersionLabel"] = "\u7248\u672c\uff1a1.1.0",
         ["AdminYes"] = "\u7ba1\u7406\u5458\uff1a\u662f",
         ["AdminNo"] = "\u7ba1\u7406\u5458\uff1a\u5426",
         ["TunEnabled"] = "TUN\uff1a\u5df2\u5f00\u542f",
@@ -135,7 +135,7 @@ public static class Localizer
 
     private static readonly IReadOnlyDictionary<string, string> En = new Dictionary<string, string>
     {
-        ["VersionLabel"] = "Version: 1.0.6",
+        ["VersionLabel"] = "Version: 1.1.0",
         ["AdminYes"] = "Admin: yes",
         ["AdminNo"] = "Admin: no",
         ["TunEnabled"] = "TUN: enabled",

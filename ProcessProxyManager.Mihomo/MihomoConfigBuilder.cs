@@ -69,7 +69,7 @@ public sealed class MihomoConfigBuilder
             mode: rule
             log-level: info
             external-controller: 127.0.0.1:19090
-            secret: your_password
+            secret: ""
             proxies: []
             proxy-groups:
               - name: PROXY

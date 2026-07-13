@@ -2,21 +2,16 @@ namespace ProcessProxyManager.Native;
 
 public sealed class UpstreamTrafficDetector
 {
-    private readonly NativeConnectionScanner _connectionScanner;
-
-    public UpstreamTrafficDetector(NativeConnectionScanner connectionScanner)
-    {
-        _connectionScanner = connectionScanner;
-    }
-
-    public IReadOnlyDictionary<int, int> CountByProcessId(int upstreamPort)
+    public IReadOnlyDictionary<int, int> CountByProcessId(
+        int upstreamPort,
+        IReadOnlyList<NetworkConnectionSnapshot> connections)
     {
         if (upstreamPort <= 0)
         {
             return new Dictionary<int, int>();
         }
 
-        return _connectionScanner.GetConnections()
+        return connections
             .Where(connection => connection.RemotePort == upstreamPort && IsLoopback(connection.RemoteAddress))
             .GroupBy(static connection => connection.ProcessId)
             .ToDictionary(static group => group.Key, static group => group.Count());

@@ -120,17 +120,6 @@
             <Setter Property="Margin" Value="0,0,0,8" />
         </Style>
 
-        <Style x:Key="GridActionButton" TargetType="{x:Type Button}">
-            <Setter Property="MinWidth" Value="58" />
-            <Setter Property="Height" Value="28" />
-            <Setter Property="Padding" Value="8,0" />
-            <Setter Property="Margin" Value="0,0,5,0" />
-            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
-            <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushSoft}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-
         <Style x:Key="FieldTextBox" TargetType="{x:Type TextBox}">
             <Setter Property="Height" Value="32" />
             <Setter Property="Margin" Value="0,4,0,10" />
@@ -150,6 +139,8 @@
 
         <Style TargetType="{x:Type DataGridRow}">
             <Setter Property="MinHeight" Value="54" />
+            <Setter Property="DetailsVisibility"
+                    Value="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}" />
         </Style>
     </Window.Resources>
 
@@ -229,11 +220,8 @@
                         <TextBlock DockPanel.Dock="Right" Text="{Binding ProcessCountText}" Foreground="{DynamicResource SecondaryTextBrush}" />
                     </DockPanel>
 
-                    <ScrollViewer Grid.Row="2"
-                                  HorizontalScrollBarVisibility="Visible"
-                                  VerticalScrollBarVisibility="Disabled"
-                                  CanContentScroll="False">
-                    <DataGrid MinWidth="1728"
+                    <DataGrid Grid.Row="2"
+                              MinWidth="1728"
                               ItemsSource="{Binding ProcessGroups}"
                               SelectedItem="{Binding SelectedProcess}"
                               AutoGenerateColumns="False"
@@ -242,13 +230,17 @@
                               GridLinesVisibility="Horizontal"
                               HeadersVisibility="Column"
                               RowHeaderWidth="0"
-                              RowDetailsVisibilityMode="Visible"
+                              RowDetailsVisibilityMode="Collapsed"
+                              EnableRowVirtualization="True"
+                              EnableColumnVirtualization="True"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
                               AlternatingRowBackground="{DynamicResource SubtleSurfaceBrush}"
                               Background="{DynamicResource SurfaceBrush}"
                               BorderThickness="0"
                               HorizontalGridLinesBrush="{DynamicResource BorderBrushMuted}"
-                              HorizontalScrollBarVisibility="Disabled"
-                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                              HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
                               VerticalScrollBarVisibility="Auto"
                               ScrollViewer.CanContentScroll="True"
                               SelectionMode="Single"
@@ -314,18 +306,6 @@
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="PID" Binding="{Binding PrimaryProcessId}" Width="92" IsReadOnly="True" />
                             <DataGridTextColumn Header="{Binding Data[ColPath], Source={StaticResource VmProxy}}" Binding="{Binding DisplayPath}" Width="180" IsReadOnly="True" />
-                            <DataGridTemplateColumn Header="{Binding Data[ColActions], Source={StaticResource VmProxy}}" Width="306">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Button Content="PROXY" Command="{Binding SetProxyCommand}" Style="{StaticResource GridActionButton}" />
-                                            <Button Content="DIRECT" Command="{Binding SetDirectCommand}" Style="{StaticResource GridActionButton}" />
-                                            <Button Content="REJECT" Command="{Binding SetRejectCommand}" Style="{StaticResource GridActionButton}" />
-                                            <Button Content="{Binding Data[BtnClear], Source={StaticResource VmProxy}}" Command="{Binding ClearRuleCommand}" Style="{StaticResource GridActionButton}" MinWidth="42" Margin="0" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
                             <DataGridComboBoxColumn Header="{Binding Data[ColRule], Source={StaticResource VmProxy}}"
                                                     Width="132"
                                                     ItemsSource="{Binding Source={StaticResource ProxyActions}}"
@@ -338,7 +318,6 @@
                             <DataGridTextColumn Header="{Binding Data[ColSuspect], Source={StaticResource VmProxy}}" Binding="{Binding SuspectedDirectConnectionCount}" Width="98" IsReadOnly="True" />
                         </DataGrid.Columns>
                     </DataGrid>
-                    </ScrollViewer>
                 </Grid>
             </Border>
 

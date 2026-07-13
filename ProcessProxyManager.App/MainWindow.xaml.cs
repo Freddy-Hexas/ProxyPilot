@@ -18,7 +18,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _foregroundRefreshTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(15)
+            Interval = TimeSpan.FromSeconds(30)
         };
         _foregroundRefreshTimer.Tick += ForegroundRefreshTimerTick;
         LoadWindowIcon();
@@ -61,7 +61,7 @@ public partial class MainWindow : Window
     private async void MainWindowActivated(object? sender, EventArgs e)
     {
         UpdateForegroundRefreshTimer();
-        await _viewModel.RefreshProcessesForForegroundAsync(force: true);
+        await _viewModel.RefreshProcessesForForegroundAsync();
     }
 
     private void MainWindowIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)

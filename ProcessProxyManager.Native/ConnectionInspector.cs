@@ -4,17 +4,6 @@ namespace ProcessProxyManager.Native;
 
 public sealed class ConnectionInspector
 {
-    private readonly NativeConnectionScanner _nativeConnectionScanner;
-
-    public ConnectionInspector(NativeConnectionScanner nativeConnectionScanner)
-    {
-        _nativeConnectionScanner = nativeConnectionScanner;
-    }
-
-    public IReadOnlyDictionary<int, ConnectionInspectionResult> Inspect(IReadOnlyList<MihomoConnection> mihomoConnections)
-    {
-        return Inspect(mihomoConnections, _nativeConnectionScanner.GetConnections());
-    }
 
     public IReadOnlyDictionary<int, ConnectionInspectionResult> Inspect(
         IReadOnlyList<MihomoConnection> mihomoConnections,

@@ -20,21 +20,16 @@ public sealed class UpstreamLoopbackDetector
         "sing-box"
     ];
 
-    private readonly NativeConnectionScanner _connectionScanner;
-
-    public UpstreamLoopbackDetector(NativeConnectionScanner connectionScanner)
-    {
-        _connectionScanner = connectionScanner;
-    }
-
-    public UpstreamLoopbackResult Detect(int upstreamPort)
+    public UpstreamLoopbackResult Detect(
+        int upstreamPort,
+        IReadOnlyList<NetworkConnectionSnapshot> connections)
     {
         if (upstreamPort <= 0)
         {
             return new UpstreamLoopbackResult(false, 0, []);
         }
 
-        var processIds = _connectionScanner.GetConnections()
+        var processIds = connections
             .Where(connection =>
                 connection.RemotePort == upstreamPort &&
                 IsLoopback(connection.RemoteAddress) &&

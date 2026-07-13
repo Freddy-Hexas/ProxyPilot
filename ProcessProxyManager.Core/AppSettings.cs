@@ -16,7 +16,7 @@ public sealed class AppSettings
 
     public string ApiUrl { get; set; } = "http://127.0.0.1:19090";
 
-    public string Secret { get; set; } = "your_password";
+    public string Secret { get; set; } = string.Empty;
 
     public bool EnableTun { get; set; } = true;
 

@@ -10,13 +10,19 @@ namespace ProcessProxyManager.App;
 public sealed class ProcessGroupViewModel : INotifyPropertyChanged
 {
     private int _currentConnectionCount;
+    private string _displayName;
+    private string _fileDescription;
     private bool _isExpanded;
+    private string _mainWindowTitle;
     private int _mihomoConnectionCount;
+    private string _processName;
+    private string _processPath;
     private ProxyAction _selectedAction;
     private string _lastMatchedRule = "-";
     private string _lastRouteChain = "-";
     private int _suspectedDirectConnectionCount;
     private int _upstreamConnectionCount;
+    private long _workingSetBytes;
 
     public ProcessGroupViewModel(
         string groupKey,
@@ -31,20 +37,16 @@ public sealed class ProcessGroupViewModel : INotifyPropertyChanged
         IReadOnlyList<ProcessRowViewModel> processes)
     {
         GroupKey = groupKey;
-        DisplayName = displayName;
-        ProcessName = processName;
-        ProcessPath = processPath;
-        FileDescription = fileDescription;
-        MainWindowTitle = mainWindowTitle;
-        WorkingSetBytes = workingSetBytes;
+        _displayName = displayName;
+        _processName = processName;
+        _processPath = processPath;
+        _fileDescription = fileDescription;
+        _mainWindowTitle = mainWindowTitle;
+        _workingSetBytes = workingSetBytes;
         _selectedAction = selectedAction;
         Icon = icon;
         Processes = new ObservableCollection<ProcessRowViewModel>(processes);
 
-        SetProxyCommand = new RelayCommand(_ => SelectedAction = ProxyAction.PROXY);
-        SetDirectCommand = new RelayCommand(_ => SelectedAction = ProxyAction.DIRECT);
-        SetRejectCommand = new RelayCommand(_ => SelectedAction = ProxyAction.REJECT);
-        ClearRuleCommand = new RelayCommand(_ => SelectedAction = ProxyAction.None);
         ToggleExpandedCommand = new RelayCommand(_ =>
         {
             if (CanExpand)
@@ -58,17 +60,17 @@ public sealed class ProcessGroupViewModel : INotifyPropertyChanged
 
     public string GroupKey { get; }
 
-    public string DisplayName { get; }
+    public string DisplayName => _displayName;
 
-    public string ProcessName { get; }
+    public string ProcessName => _processName;
 
-    public string ProcessPath { get; }
+    public string ProcessPath => _processPath;
 
-    public string FileDescription { get; }
+    public string FileDescription => _fileDescription;
 
-    public string MainWindowTitle { get; }
+    public string MainWindowTitle => _mainWindowTitle;
 
-    public long WorkingSetBytes { get; }
+    public long WorkingSetBytes => _workingSetBytes;
 
     public ImageSource? Icon { get; }
 
@@ -132,14 +134,6 @@ public sealed class ProcessGroupViewModel : INotifyPropertyChanged
         ProxyAction.REJECT => "REJECT",
         _ => "No explicit rule"
     };
-
-    public ICommand SetProxyCommand { get; }
-
-    public ICommand SetDirectCommand { get; }
-
-    public ICommand SetRejectCommand { get; }
-
-    public ICommand ClearRuleCommand { get; }
 
     public ICommand ToggleExpandedCommand { get; }
 
@@ -270,6 +264,70 @@ public sealed class ProcessGroupViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(SelectedAction));
             OnPropertyChanged(nameof(RuleDescription));
         }
+    }
+
+    public void ReplaceProcesses(IReadOnlyList<ProcessRowViewModel> processes)
+    {
+        var wasExpanded = IsExpanded;
+        var currentIndex = 0;
+        while (currentIndex < processes.Count)
+        {
+            var desired = processes[currentIndex];
+            if (currentIndex < Processes.Count && ReferenceEquals(Processes[currentIndex], desired))
+            {
+                currentIndex++;
+                continue;
+            }
+
+            var existingIndex = Processes.IndexOf(desired);
+            if (existingIndex >= 0)
+            {
+                Processes.Move(existingIndex, currentIndex);
+            }
+            else
+            {
+                Processes.Insert(currentIndex, desired);
+            }
+
+            currentIndex++;
+        }
+
+        while (Processes.Count > processes.Count)
+        {
+            Processes.RemoveAt(Processes.Count - 1);
+        }
+
+        IsExpanded = wasExpanded && CanExpand;
+        OnPropertyChanged(nameof(ProcessCount));
+        OnPropertyChanged(nameof(CountBadge));
+        OnPropertyChanged(nameof(CanExpand));
+        OnPropertyChanged(nameof(PrimaryProcessId));
+        OnPropertyChanged(nameof(ProcessIdSummary));
+        RefreshFromChildren();
+    }
+
+    public void UpdatePresentation(
+        string displayName,
+        string processName,
+        string processPath,
+        string fileDescription,
+        string mainWindowTitle,
+        long workingSetBytes)
+    {
+        _displayName = displayName;
+        _processName = processName;
+        _processPath = processPath;
+        _fileDescription = fileDescription;
+        _mainWindowTitle = mainWindowTitle;
+        _workingSetBytes = workingSetBytes;
+        OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(ProcessName));
+        OnPropertyChanged(nameof(ProcessPath));
+        OnPropertyChanged(nameof(FileDescription));
+        OnPropertyChanged(nameof(MainWindowTitle));
+        OnPropertyChanged(nameof(WorkingSetBytes));
+        OnPropertyChanged(nameof(Subtitle));
+        OnPropertyChanged(nameof(DisplayPath));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Windows.Input;
 using ProcessProxyManager.Core;
 
 namespace ProcessProxyManager.App;
@@ -8,55 +7,52 @@ namespace ProcessProxyManager.App;
 public sealed class ProcessRowViewModel : INotifyPropertyChanged
 {
     private int _currentConnectionCount;
+    private string _fileDescription;
+    private string _mainWindowTitle;
     private int _mihomoConnectionCount;
+    private string _processName;
+    private string _processPath;
+    private string _productName;
     private ProxyAction _selectedAction;
     private string _lastMatchedRule = "-";
     private string _lastRouteChain = "-";
     private int _suspectedDirectConnectionCount;
     private int _upstreamConnectionCount;
+    private long _workingSetBytes;
 
     public ProcessRowViewModel(ProcessSnapshot process, ProxyAction selectedAction)
     {
         ProcessId = process.ProcessId;
-        ProcessName = process.ProcessName;
-        ProcessPath = process.ProcessPath;
-        WorkingSetBytes = process.WorkingSetBytes;
-        FileDescription = process.FileDescription;
-        ProductName = process.ProductName;
-        MainWindowTitle = process.MainWindowTitle;
+        StartTimeUtcTicks = process.StartTimeUtcTicks;
+        _processName = process.ProcessName;
+        _processPath = process.ProcessPath;
+        _workingSetBytes = process.WorkingSetBytes;
+        _fileDescription = process.FileDescription;
+        _productName = process.ProductName;
+        _mainWindowTitle = process.MainWindowTitle;
         _selectedAction = selectedAction;
 
-        SetProxyCommand = new RelayCommand(_ => SelectedAction = ProxyAction.PROXY);
-        SetDirectCommand = new RelayCommand(_ => SelectedAction = ProxyAction.DIRECT);
-        SetRejectCommand = new RelayCommand(_ => SelectedAction = ProxyAction.REJECT);
-        ClearRuleCommand = new RelayCommand(_ => SelectedAction = ProxyAction.None);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public int ProcessId { get; }
 
-    public string ProcessName { get; }
+    public long StartTimeUtcTicks { get; }
 
-    public string ProcessPath { get; }
+    public string ProcessName => _processName;
 
-    public string DisplayPath => string.IsNullOrWhiteSpace(ProcessPath) ? "-" : ProcessPath;
+    public string ProcessPath => _processPath;
 
-    public long WorkingSetBytes { get; }
+    public string DisplayPath => string.IsNullOrWhiteSpace(_processPath) ? "-" : _processPath;
 
-    public string FileDescription { get; }
+    public long WorkingSetBytes => _workingSetBytes;
 
-    public string ProductName { get; }
+    public string FileDescription => _fileDescription;
 
-    public string MainWindowTitle { get; }
+    public string ProductName => _productName;
 
-    public ICommand SetProxyCommand { get; }
-
-    public ICommand SetDirectCommand { get; }
-
-    public ICommand SetRejectCommand { get; }
-
-    public ICommand ClearRuleCommand { get; }
+    public string MainWindowTitle => _mainWindowTitle;
 
     public ProxyAction SelectedAction
     {
@@ -179,6 +175,46 @@ public sealed class ProcessRowViewModel : INotifyPropertyChanged
     {
         LastMatchedRule = string.IsNullOrWhiteSpace(matchedRule) ? "-" : matchedRule;
         LastRouteChain = string.IsNullOrWhiteSpace(routeChain) ? "-" : routeChain;
+    }
+
+    public void UpdateSnapshot(ProcessSnapshot process)
+    {
+        if (!string.Equals(_processName, process.ProcessName, StringComparison.Ordinal))
+        {
+            _processName = process.ProcessName;
+            OnPropertyChanged(nameof(ProcessName));
+        }
+
+        if (!string.Equals(_processPath, process.ProcessPath, StringComparison.Ordinal))
+        {
+            _processPath = process.ProcessPath;
+            OnPropertyChanged(nameof(ProcessPath));
+            OnPropertyChanged(nameof(DisplayPath));
+        }
+
+        if (_workingSetBytes != process.WorkingSetBytes)
+        {
+            _workingSetBytes = process.WorkingSetBytes;
+            OnPropertyChanged(nameof(WorkingSetBytes));
+        }
+
+        if (!string.Equals(_fileDescription, process.FileDescription, StringComparison.Ordinal))
+        {
+            _fileDescription = process.FileDescription;
+            OnPropertyChanged(nameof(FileDescription));
+        }
+
+        if (!string.Equals(_productName, process.ProductName, StringComparison.Ordinal))
+        {
+            _productName = process.ProductName;
+            OnPropertyChanged(nameof(ProductName));
+        }
+
+        if (!string.Equals(_mainWindowTitle, process.MainWindowTitle, StringComparison.Ordinal))
+        {
+            _mainWindowTitle = process.MainWindowTitle;
+            OnPropertyChanged(nameof(MainWindowTitle));
+        }
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

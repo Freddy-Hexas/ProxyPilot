@@ -3,6 +3,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 using ProcessProxyManager.Core;
@@ -20,6 +22,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private readonly MihomoApiClient _apiClient;
     private readonly MihomoConfigBuilder _configBuilder;
     private readonly ConnectionInspector _connectionInspector;
+    private readonly ConnectionSnapshotService _connectionSnapshotService;
     private readonly LocalProxyDetector _localProxyDetector;
     private readonly MihomoProcessManager _mihomoProcessManager;
     private readonly MihomoRuleGenerator _ruleGenerator;
@@ -37,6 +40,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private readonly SemaphoreSlim _processRefreshGate = new(1, 1);
     private AppSettings _settings = new();
     private DateTimeOffset _lastProcessRefreshUtc = DateTimeOffset.MinValue;
+    private int _startupGeneration;
+    private int _tunRouteExcludePort = -1;
     private bool _syncingDuplicateRules;
     private ProcessGroupViewModel? _selectedProcess;
     private string _apiStatusKey = "ApiNotChecked";
@@ -53,8 +58,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public MainWindowViewModel()
     {
         var appRoot = AppContext.BaseDirectory;
-        var dataRoot = Path.Combine(appRoot, "data");
-        var configRoot = Path.Combine(appRoot, "config");
+        AppPaths.MigrateLegacyState(appRoot);
+        var dataRoot = AppPaths.Data;
+        var configRoot = AppPaths.Config;
 
         SettingsFilePath = Path.Combine(dataRoot, "settings.json");
         RulesFilePath = Path.Combine(dataRoot, "user-rules.json");
@@ -69,13 +75,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         _administratorDetector = new AdministratorDetector();
         _apiClient = new MihomoApiClient(new HttpClient { Timeout = TimeSpan.FromSeconds(3) });
         _mihomoProcessManager = new MihomoProcessManager();
-        _connectionInspector = new ConnectionInspector(new NativeConnectionScanner());
+        _connectionSnapshotService = new ConnectionSnapshotService();
+        _connectionInspector = new ConnectionInspector();
         _localProxyDetector = new LocalProxyDetector();
         _systemProxyManager = new SystemProxyManager();
         _upstreamBypassDetector = new UpstreamBypassDetector();
         _upstreamHealthChecker = new UpstreamHealthChecker();
-        _upstreamLoopbackDetector = new UpstreamLoopbackDetector(new NativeConnectionScanner());
-        _upstreamTrafficDetector = new UpstreamTrafficDetector(new NativeConnectionScanner());
+        _upstreamLoopbackDetector = new UpstreamLoopbackDetector();
+        _upstreamTrafficDetector = new UpstreamTrafficDetector();
         _processConnectionTerminator = new ProcessConnectionTerminator();
 
         _mihomoProcessManager.Exited += (_, eventArgs) =>
@@ -396,6 +403,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public async Task InitializeAsync()
     {
+        using var measurement = PerformanceLog.Measure("startup-ui-ready");
         IsAdministrator = _administratorDetector.IsAdministrator();
 
         _settings = await _settingsStore.LoadAsync();
@@ -409,21 +417,45 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             _settings.UpstreamProxySource = string.Empty;
         }
 
-        UpdateTunRouteExcludes();
-
-        if (_settings.AutoDetectUpstreamProxy && _settings.UpstreamProxyPort <= 0)
-        {
-            DetectAndApplyBestUpstreamProxy();
-        }
-
         LocateBundledMihomoIfPresent();
         await _settingsStore.SaveAsync(_settings);
         NotifySettingsChanged();
         NotifyLocalizationChanged();
 
         LoadKnownRules(await _ruleStore.LoadAsync());
-        await StartMihomoOnLaunchAsync();
-        await RefreshProcessesAsync(showStatus: true, force: true);
+        var startupGeneration = Interlocked.Increment(ref _startupGeneration);
+        _ = RunStartupBackgroundTasksAsync(startupGeneration);
+    }
+
+    private async Task RunStartupBackgroundTasksAsync(int startupGeneration)
+    {
+        using var measurement = PerformanceLog.Measure("startup-background");
+        try
+        {
+            var snapshotTask = CaptureConnectionSnapshotAsync();
+            var refreshTask = RefreshProcessesAsync(showStatus: true, force: true);
+            var snapshot = await snapshotTask;
+            await DetectUpstreamOnLaunchAsync(snapshot);
+            await Task.WhenAll(StartMihomoOnLaunchAsync(), refreshTask);
+        }
+        catch (Exception exception)
+        {
+            if (startupGeneration == _startupGeneration)
+            {
+                SetStatus("StatusScanFailed", exception.Message);
+            }
+        }
+    }
+
+    private async Task DetectUpstreamOnLaunchAsync(ConnectionSnapshot snapshot)
+    {
+        if (_settings.AutoDetectUpstreamProxy && _settings.UpstreamProxyPort <= 0)
+        {
+            DetectAndApplyBestUpstreamProxy(snapshot.Connections);
+        }
+
+        await UpdateTunRouteExcludesAsync(snapshot.Connections);
+        await SaveSettingsAsync();
     }
 
     public async Task ShutdownAsync()
@@ -456,7 +488,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private async Task DetectUpstreamProxyAsync()
     {
-        if (DetectAndApplyBestUpstreamProxy())
+        var snapshot = await CaptureConnectionSnapshotAsync();
+        if (DetectAndApplyBestUpstreamProxy(snapshot.Connections))
         {
             await SaveSettingsAsync();
             SetStatus("StatusUpstreamDetected", FormatUpstreamEndpoint());
@@ -548,36 +581,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 SetStatus("StatusScanning");
             }
 
+            var selectedGroupKey = SelectedProcess?.GroupKey;
             var savedRules = await _ruleStore.LoadAsync();
             LoadKnownRules(savedRules);
-            var selectedGroupKey = SelectedProcess?.GroupKey;
-
-            foreach (var process in Processes)
-            {
-                UpdateKnownRule(process);
-                process.PropertyChanged -= ProcessRowPropertyChanged;
-            }
-
+            var stopwatch = Stopwatch.StartNew();
             var snapshots = await Task.Run(_processScanner.GetRunningProcesses);
-            Processes.Clear();
-            ProcessGroups.Clear();
-
-            foreach (var snapshot in snapshots)
-            {
-                _knownRules.TryGetValue(snapshot.ProcessName, out var knownRule);
-                var action = knownRule?.Action ?? ProxyAction.None;
-                var row = new ProcessRowViewModel(snapshot, action);
-                row.PropertyChanged += ProcessRowPropertyChanged;
-                Processes.Add(row);
-            }
-
-            BuildProcessGroups();
+            ApplyProcessDiff(snapshots);
+            BuildProcessGroupsIncrementally();
             SelectedProcess = string.IsNullOrWhiteSpace(selectedGroupKey)
                 ? ProcessGroups.FirstOrDefault()
                 : ProcessGroups.FirstOrDefault(group =>
                     string.Equals(group.GroupKey, selectedGroupKey, StringComparison.OrdinalIgnoreCase)) ?? ProcessGroups.FirstOrDefault();
             OnPropertyChanged(nameof(ProcessCountText));
             _lastProcessRefreshUtc = DateTimeOffset.UtcNow;
+            stopwatch.Stop();
+            PerformanceLog.Write(
+                "process-scan",
+                stopwatch.Elapsed,
+                $"snapshots={snapshots.Count} groups={ProcessGroups.Count}");
 
             if (showStatus)
             {
@@ -618,7 +639,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             var document = await SaveRulesCoreAsync();
 
-            PrepareTrafficTakeover();
+            await PrepareTrafficTakeoverAsync();
 
             await SaveSettingsAsync();
             await _ruleGenerator.WriteRulesYamlAsync(document.Rules, RuleSnippetPath, _settings.TunProcessDirectNames);
@@ -634,7 +655,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
 
             var health = await CheckUpstreamHealthCoreAsync();
-            InspectTunLoopbackRisk();
+            var connectionSnapshot = await CaptureConnectionSnapshotAsync();
+            InspectTunLoopbackRisk(connectionSnapshot.Connections);
 
             if (result.Success && !health.Success)
             {
@@ -721,8 +743,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         SetMihomoRuntimeStatus("MihomoRunning", _mihomoProcessManager.ProcessId?.ToString() ?? string.Empty);
         await RefreshApiStatusAfterStartAsync();
         ApplySystemProxyTakeover();
-        await CheckUpstreamHealthCoreAsync();
-        InspectTunLoopbackRisk();
+        _ = RefreshDiagnosticsAfterStartAsync();
         SetStatus(successStatusKey);
     }
 
@@ -748,10 +769,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         try
         {
             SetStatus("StatusInspecting");
-            var mihomoConnections = await _apiClient.GetConnectionsAsync(ApiUrl, Secret);
-            var results = _connectionInspector.Inspect(mihomoConnections);
-            var upstreamConnections = _upstreamTrafficDetector.CountByProcessId(UpstreamProxyPort);
-            InspectTunLoopbackRisk();
+            var stopwatch = Stopwatch.StartNew();
+            var mihomoTask = _apiClient.GetConnectionsAsync(ApiUrl, Secret);
+            var snapshotTask = CaptureConnectionSnapshotAsync();
+            await Task.WhenAll(mihomoTask, snapshotTask);
+            var nativeConnections = snapshotTask.Result.Connections;
+            var results = _connectionInspector.Inspect(mihomoTask.Result, nativeConnections);
+            var upstreamConnections = _upstreamTrafficDetector.CountByProcessId(UpstreamProxyPort, nativeConnections);
+            InspectTunLoopbackRisk(nativeConnections);
 
             foreach (var process in Processes)
             {
@@ -780,6 +805,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
 
             SetStatus("StatusInspectionComplete");
+            stopwatch.Stop();
+            PerformanceLog.Write(
+                "connection-inspection",
+                stopwatch.Elapsed,
+                $"native={nativeConnections.Count} mihomo={mihomoTask.Result.Count}");
         }
         catch (Exception exception)
         {
@@ -791,12 +821,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         var document = await SaveRulesCoreAsync();
 
-            PrepareTrafficTakeover();
+        await PrepareTrafficTakeoverAsync();
 
-            await SaveSettingsAsync();
-            await _ruleGenerator.WriteRulesYamlAsync(document.Rules, RuleSnippetPath, _settings.TunProcessDirectNames);
-            await _configBuilder.WriteGeneratedConfigAsync(_settings, document.Rules);
-        }
+        await SaveSettingsAsync();
+        await _ruleGenerator.WriteRulesYamlAsync(document.Rules, RuleSnippetPath, _settings.TunProcessDirectNames);
+        await _configBuilder.WriteGeneratedConfigAsync(_settings, document.Rules);
+    }
 
     private async Task<UserRulesDocument> SaveRulesCoreAsync()
     {
@@ -878,26 +908,120 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    private void BuildProcessGroups()
+    private void ApplyProcessDiff(IReadOnlyList<ProcessSnapshot> snapshots)
     {
-        foreach (var group in ProcessGroups)
+        foreach (var process in Processes)
         {
-            group.PropertyChanged -= ProcessGroupPropertyChanged;
+            UpdateKnownRule(process);
         }
 
-        ProcessGroups.Clear();
+        var existing = Processes.ToDictionary(
+            static process => new ProcessIdentity(process.ProcessId, process.StartTimeUtcTicks));
+        var activeIdentities = snapshots
+            .Select(static snapshot => new ProcessIdentity(snapshot.ProcessId, snapshot.StartTimeUtcTicks))
+            .ToHashSet();
 
-        var groups = Processes
+        for (var index = Processes.Count - 1; index >= 0; index--)
+        {
+            var process = Processes[index];
+            var identity = new ProcessIdentity(process.ProcessId, process.StartTimeUtcTicks);
+            if (activeIdentities.Contains(identity))
+            {
+                continue;
+            }
+
+            process.PropertyChanged -= ProcessRowPropertyChanged;
+            Processes.RemoveAt(index);
+        }
+
+        foreach (var snapshot in snapshots)
+        {
+            var identity = new ProcessIdentity(snapshot.ProcessId, snapshot.StartTimeUtcTicks);
+            if (existing.TryGetValue(identity, out var row))
+            {
+                row.UpdateSnapshot(snapshot);
+                continue;
+            }
+
+            _knownRules.TryGetValue(snapshot.ProcessName, out var knownRule);
+            var action = knownRule?.Action ?? ProxyAction.None;
+            row = new ProcessRowViewModel(snapshot, action);
+            row.PropertyChanged += ProcessRowPropertyChanged;
+            Processes.Add(row);
+        }
+    }
+
+    private void BuildProcessGroupsIncrementally()
+    {
+        var existingGroups = ProcessGroups.ToDictionary(
+            static group => group.GroupKey,
+            StringComparer.OrdinalIgnoreCase);
+        var desiredGroups = Processes
             .GroupBy(static process => GetProcessGroupKey(process), StringComparer.OrdinalIgnoreCase)
-            .Select(CreateProcessGroup)
-            .OrderByDescending(static group => group.WorkingSetBytes)
-            .ThenBy(static group => group.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var children = group
+                    .OrderByDescending(static process => process.WorkingSetBytes)
+                    .ThenBy(static process => process.ProcessId)
+                    .ToList();
+                return new DesiredProcessGroup(group.Key, children);
+            })
+            .OrderByDescending(static group => group.Processes.Sum(static process => process.WorkingSetBytes))
+            .ThenBy(static group => GetDisplayName(group.Processes[0]), StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        foreach (var group in groups)
+        var desiredKeys = desiredGroups
+            .Select(static group => group.GroupKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        for (var index = ProcessGroups.Count - 1; index >= 0; index--)
         {
-            group.PropertyChanged += ProcessGroupPropertyChanged;
-            ProcessGroups.Add(group);
+            if (desiredKeys.Contains(ProcessGroups[index].GroupKey))
+            {
+                continue;
+            }
+
+            ProcessGroups[index].PropertyChanged -= ProcessGroupPropertyChanged;
+            ProcessGroups.RemoveAt(index);
+        }
+
+        for (var targetIndex = 0; targetIndex < desiredGroups.Count; targetIndex++)
+        {
+            var desired = desiredGroups[targetIndex];
+            var primary = desired.Processes[0];
+            var selectedAction = desired.Processes
+                .Select(static process => process.SelectedAction)
+                .FirstOrDefault(static action => action != ProxyAction.None);
+            foreach (var child in desired.Processes)
+            {
+                child.SelectedAction = selectedAction;
+            }
+
+            if (!existingGroups.TryGetValue(desired.GroupKey, out var group))
+            {
+                group = CreateProcessGroup(desired.Processes.GroupBy(
+                    _ => desired.GroupKey,
+                    StringComparer.OrdinalIgnoreCase).Single());
+                group.PropertyChanged += ProcessGroupPropertyChanged;
+                ProcessGroups.Insert(Math.Min(targetIndex, ProcessGroups.Count), group);
+                existingGroups[desired.GroupKey] = group;
+            }
+            else
+            {
+                group.ReplaceProcesses(desired.Processes);
+                group.UpdatePresentation(
+                    GetDisplayName(primary),
+                    primary.ProcessName,
+                    primary.ProcessPath,
+                    primary.FileDescription,
+                    primary.MainWindowTitle,
+                    desired.Processes.Sum(static process => process.WorkingSetBytes));
+            }
+
+            var currentIndex = ProcessGroups.IndexOf(group);
+            if (currentIndex != targetIndex)
+            {
+                ProcessGroups.Move(currentIndex, targetIndex);
+            }
         }
     }
 
@@ -1035,24 +1159,28 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private void NormalizeSettings()
     {
         var appRoot = AppContext.BaseDirectory;
-        var configRoot = Path.Combine(appRoot, "config");
+        var configRoot = AppPaths.Config;
+        var legacyConfigRoot = Path.Combine(appRoot, "config");
 
         if (string.IsNullOrWhiteSpace(_settings.MihomoPath))
         {
             _settings.MihomoPath = Path.Combine(appRoot, "resources", "mihomo.exe");
         }
 
-        if (string.IsNullOrWhiteSpace(_settings.TemplateConfigPath))
+        if (string.IsNullOrWhiteSpace(_settings.TemplateConfigPath) ||
+            IsPathUnder(_settings.TemplateConfigPath, legacyConfigRoot))
         {
             _settings.TemplateConfigPath = Path.Combine(configRoot, "template.yaml");
         }
 
-        if (string.IsNullOrWhiteSpace(_settings.GeneratedConfigPath))
+        if (string.IsNullOrWhiteSpace(_settings.GeneratedConfigPath) ||
+            IsPathUnder(_settings.GeneratedConfigPath, legacyConfigRoot))
         {
             _settings.GeneratedConfigPath = Path.Combine(configRoot, "config.process-manager.yaml");
         }
 
-        if (string.IsNullOrWhiteSpace(_settings.RuleSnippetPath))
+        if (string.IsNullOrWhiteSpace(_settings.RuleSnippetPath) ||
+            IsPathUnder(_settings.RuleSnippetPath, legacyConfigRoot))
         {
             _settings.RuleSnippetPath = RuleSnippetPath;
         }
@@ -1062,9 +1190,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             _settings.ApiUrl = "http://127.0.0.1:19090";
         }
 
-        if (string.IsNullOrWhiteSpace(_settings.Secret))
+        if (string.IsNullOrWhiteSpace(_settings.Secret) ||
+            string.Equals(_settings.Secret, "your_password", StringComparison.Ordinal))
         {
-            _settings.Secret = "your_password";
+            _settings.Secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
         }
 
         if (_settings.Language is not ChineseLanguage and not EnglishLanguage)
@@ -1088,9 +1217,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    private bool DetectAndApplyBestUpstreamProxy()
+    private bool DetectAndApplyBestUpstreamProxy(
+        IReadOnlyList<NetworkConnectionSnapshot> connections)
     {
-        var detected = _localProxyDetector.DetectBest();
+        var detected = _localProxyDetector.DetectBest(connections);
         if (detected is null)
         {
             return false;
@@ -1105,21 +1235,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         return true;
     }
 
-    private void PrepareTrafficTakeover()
+    private async Task PrepareTrafficTakeoverAsync()
     {
         if (_settings.SystemProxyTakeoverEnabled)
         {
-            CaptureCurrentSystemProxyAsUpstream();
+            await CaptureCurrentSystemProxyAsUpstreamAsync();
             return;
         }
 
         if (_settings.AutoDetectUpstreamProxy)
         {
-            DetectAndApplyBestUpstreamProxy();
+            await DetectAndApplyBestUpstreamProxyAsync();
         }
+
+        await UpdateTunRouteExcludesAsync();
     }
 
-    private void CaptureCurrentSystemProxyAsUpstream()
+    private async Task CaptureCurrentSystemProxyAsUpstreamAsync()
     {
         var snapshot = _systemProxyManager.GetSnapshot();
         var takeoverProxy = GetProxyPilotSystemProxyAddress();
@@ -1139,17 +1271,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         else if (_settings.AutoDetectUpstreamProxy && _settings.UpstreamProxyPort <= 0)
         {
-            DetectAndApplyBestUpstreamProxy();
+            await DetectAndApplyBestUpstreamProxyAsync();
         }
 
         if (IsProxyPilotEndpoint(_settings.UpstreamProxyHost, _settings.UpstreamProxyPort))
         {
             _settings.UpstreamProxyPort = 0;
             _settings.UpstreamProxySource = string.Empty;
-            DetectAndApplyBestUpstreamProxy();
+            await DetectAndApplyBestUpstreamProxyAsync();
         }
 
-        UpdateTunRouteExcludes();
+        await UpdateTunRouteExcludesAsync();
 
         if (!alreadyUsingProxyPilot)
         {
@@ -1197,27 +1329,89 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         return AppSettings.ProxyPilotMixedPort;
     }
 
-    private void UpdateTunRouteExcludes()
+    private async Task UpdateTunRouteExcludesAsync(
+        IReadOnlyList<NetworkConnectionSnapshot>? connections = null)
     {
-        _settings.TunRouteExcludeAddresses = _upstreamBypassDetector
-            .DetectRouteExcludeCidrs(_settings.UpstreamProxyPort)
-            .ToList();
-        _settings.TunProcessDirectNames = _upstreamBypassDetector
-            .DetectProcessDirectNames(_settings.UpstreamProxyPort)
-            .ToList();
+        if (_tunRouteExcludePort == _settings.UpstreamProxyPort)
+        {
+            return;
+        }
+
+        connections ??= (await CaptureConnectionSnapshotAsync()).Connections;
+        var upstreamPort = _settings.UpstreamProxyPort;
+        var routeExcludesTask = Task.Run(() => _upstreamBypassDetector
+            .DetectRouteExcludeCidrs(upstreamPort)
+            .ToList());
+        var directNamesTask = Task.Run(() => _upstreamBypassDetector
+            .DetectProcessDirectNames(upstreamPort, connections)
+            .ToList());
+        await Task.WhenAll(routeExcludesTask, directNamesTask);
+        _settings.TunRouteExcludeAddresses = routeExcludesTask.Result;
+        _settings.TunProcessDirectNames = directNamesTask.Result;
+        _tunRouteExcludePort = upstreamPort;
         OnPropertyChanged(nameof(TunLoopbackStatus));
     }
 
-    private void InspectTunLoopbackRisk()
+    private void InspectTunLoopbackRisk(
+        IReadOnlyList<NetworkConnectionSnapshot> connections)
     {
-        _lastLoopbackResult = _upstreamLoopbackDetector.Detect(UpstreamProxyPort);
+        _lastLoopbackResult = _upstreamLoopbackDetector.Detect(UpstreamProxyPort, connections);
         OnPropertyChanged(nameof(TunLoopbackStatus));
+    }
+
+    private async Task<ConnectionSnapshot> CaptureConnectionSnapshotAsync()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var snapshot = await _connectionSnapshotService.GetSnapshotAsync(TimeSpan.Zero);
+        stopwatch.Stop();
+        PerformanceLog.Write(
+            "connection-scan",
+            stopwatch.Elapsed,
+            $"connections={snapshot.Connections.Count}");
+        return snapshot;
+    }
+
+    private async Task<bool> DetectAndApplyBestUpstreamProxyAsync()
+    {
+        var snapshot = await CaptureConnectionSnapshotAsync();
+        return DetectAndApplyBestUpstreamProxy(snapshot.Connections);
+    }
+
+    private async Task RefreshDiagnosticsAfterStartAsync()
+    {
+        try
+        {
+            var healthTask = CheckUpstreamHealthCoreAsync();
+            var snapshotTask = CaptureConnectionSnapshotAsync();
+            await Task.WhenAll(healthTask, snapshotTask);
+            InspectTunLoopbackRisk(snapshotTask.Result.Connections);
+        }
+        catch
+        {
+            // Startup diagnostics are informative and must not block application use.
+        }
     }
 
     private static bool IsProxyPilotEndpoint(string host, int port)
     {
         return port is AppSettings.ProxyPilotMixedPort or AppSettings.ProxyPilotApiPort &&
             IsLoopbackHost(host);
+    }
+
+    private static bool IsPathUnder(string path, string directory)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            var fullDirectory = Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            return fullPath.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool IsLoopbackHost(string host)
@@ -1397,7 +1591,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(UpstreamHealthStatus));
         OnPropertyChanged(nameof(RouteChainStatus));
         OnPropertyChanged(nameof(TunLoopbackStatus));
+        _tunRouteExcludePort = -1;
     }
+
+    private readonly record struct ProcessIdentity(int ProcessId, long StartTimeUtcTicks);
+
+    private sealed record DesiredProcessGroup(
+        string GroupKey,
+        IReadOnlyList<ProcessRowViewModel> Processes);
 
     private string Format(string key, params object?[] arguments)
     {

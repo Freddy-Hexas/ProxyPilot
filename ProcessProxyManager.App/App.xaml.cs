@@ -48,7 +48,7 @@ public partial class App : System.Windows.Application
         {
             LogException("DispatcherUnhandledException", args.Exception);
             System.Windows.MessageBox.Show(
-                "ProxyPilot failed to start or hit an unexpected error. Details were written to data\\crash.log.\n\n" +
+                $"ProxyPilot failed to start or hit an unexpected error. Details were written to {AppPaths.Logs}\\crash.log.\n\n" +
                 args.Exception.Message,
                 "ProxyPilot",
                 MessageBoxButton.OK,
@@ -75,9 +75,8 @@ public partial class App : System.Windows.Application
     {
         try
         {
-            var dataDirectory = Path.Combine(AppContext.BaseDirectory, "data");
-            Directory.CreateDirectory(dataDirectory);
-            var logPath = Path.Combine(dataDirectory, "crash.log");
+            Directory.CreateDirectory(AppPaths.Logs);
+            var logPath = Path.Combine(AppPaths.Logs, "crash.log");
             var text = $"""
                 [{DateTimeOffset.Now:O}] {source}
                 {exception}

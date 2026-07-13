@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using Microsoft.Win32;
 using ProcessProxyManager.Core;
@@ -27,12 +26,13 @@ public sealed class LocalProxyDetector
     private static readonly int[] CommonHttpPorts = [7890, 7897, 10809, 10808, 1080, 2080, 20171, 8118];
     private static readonly int[] CommonSocksPorts = [7891, 7898, 10808, 1080, 1086, 1087, 20170];
 
-    public IReadOnlyList<DetectedProxyEndpoint> Detect()
+    public IReadOnlyList<DetectedProxyEndpoint> Detect(
+        IReadOnlyList<NetworkConnectionSnapshot> connections)
     {
         var candidates = new List<DetectedProxyEndpoint>();
         AddSystemProxyCandidate(candidates);
         AddConfigFileCandidates(candidates);
-        AddListeningPortCandidates(candidates);
+        AddListeningPortCandidates(candidates, connections);
 
         return candidates
             .Where(static candidate => candidate.Port > 0 && candidate.Port <= 65535)
@@ -44,9 +44,10 @@ public sealed class LocalProxyDetector
             .ToList();
     }
 
-    public DetectedProxyEndpoint? DetectBest()
+    public DetectedProxyEndpoint? DetectBest(
+        IReadOnlyList<NetworkConnectionSnapshot> connections)
     {
-        return Detect().FirstOrDefault();
+        return Detect(connections).FirstOrDefault();
     }
 
     private static void AddSystemProxyCandidate(List<DetectedProxyEndpoint> candidates)
@@ -99,12 +100,11 @@ public sealed class LocalProxyDetector
         }
     }
 
-    private static void AddListeningPortCandidates(List<DetectedProxyEndpoint> candidates)
+    private static void AddListeningPortCandidates(
+        List<DetectedProxyEndpoint> candidates,
+        IReadOnlyList<NetworkConnectionSnapshot> connections)
     {
-        var rows = ReadNetstatRows();
-        var knownProcessIds = GetKnownProxyProcessIds();
-
-        foreach (var row in rows)
+        foreach (var row in connections)
         {
             if (row.Protocol != "TCP" ||
                 row.State != "LISTENING" ||
@@ -114,9 +114,9 @@ public sealed class LocalProxyDetector
                 continue;
             }
 
-            if (knownProcessIds.Contains(row.ProcessId))
+            if (IsKnownProxyProcess(row.ProcessName))
             {
-                var processName = GetProcessName(row.ProcessId);
+                var processName = row.ProcessName;
                 candidates.Add(new DetectedProxyEndpoint(
                     $"{processName} {row.LocalPort}",
                     GuessProxyType(row.LocalPort, processName),
@@ -218,89 +218,10 @@ public sealed class LocalProxyDetector
         paths.Add(Path.Combine(parts));
     }
 
-    private static HashSet<int> GetKnownProxyProcessIds()
+    private static bool IsKnownProxyProcess(string processName)
     {
-        var processIds = new HashSet<int>();
-
-        foreach (var process in Process.GetProcesses())
-        {
-            using (process)
-            {
-                try
-                {
-                    var name = process.ProcessName.ToLowerInvariant();
-                    if (KnownProxyProcesses.Any(name.Contains))
-                    {
-                        processIds.Add(process.Id);
-                    }
-                }
-                catch
-                {
-                    // Ignore inaccessible processes.
-                }
-            }
-        }
-
-        return processIds;
-    }
-
-    private static IReadOnlyList<NetstatRow> ReadNetstatRows()
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "netstat.exe",
-            Arguments = "-ano",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(startInfo);
-        if (process is null)
-        {
-            return [];
-        }
-
-        var output = process.StandardOutput.ReadToEnd();
-        process.WaitForExit(5000);
-        return ParseNetstat(output);
-    }
-
-    private static IReadOnlyList<NetstatRow> ParseNetstat(string output)
-    {
-        var rows = new List<NetstatRow>();
-
-        foreach (var rawLine in output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var line = rawLine.Trim();
-            if (!line.StartsWith("TCP", StringComparison.OrdinalIgnoreCase) &&
-                !line.StartsWith("UDP", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 4)
-            {
-                continue;
-            }
-
-            var protocol = parts[0].ToUpperInvariant();
-            var local = ParseEndpoint(parts[1]);
-
-            if (protocol == "TCP" && parts.Length >= 5 && int.TryParse(parts[^1], out var tcpProcessId))
-            {
-                var state = parts.Length >= 5 ? parts[3] : string.Empty;
-                rows.Add(new NetstatRow(protocol, local.Address, local.Port, state, tcpProcessId));
-            }
-            else if (protocol == "UDP" && int.TryParse(parts[^1], out var udpProcessId))
-            {
-                rows.Add(new NetstatRow(protocol, local.Address, local.Port, string.Empty, udpProcessId));
-            }
-        }
-
-        return rows;
+        return KnownProxyProcesses.Any(hint =>
+            processName.Contains(hint, StringComparison.OrdinalIgnoreCase));
     }
 
     private static EndpointValue ParseEndpoint(string value)
@@ -393,21 +314,6 @@ public sealed class LocalProxyDetector
         return port is AppSettings.ProxyPilotMixedPort or AppSettings.ProxyPilotApiPort &&
             IsLoopback(host);
     }
-
-    private static string GetProcessName(int processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return process.ProcessName;
-        }
-        catch
-        {
-            return "proxy";
-        }
-    }
-
-    private sealed record NetstatRow(string Protocol, string LocalAddress, int LocalPort, string State, int ProcessId);
 
     private sealed record EndpointValue(string Address, int Port);
 }

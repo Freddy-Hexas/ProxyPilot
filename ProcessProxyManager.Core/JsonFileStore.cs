@@ -40,7 +40,29 @@ public class JsonFileStore<T> where T : new()
             Directory.CreateDirectory(directory);
         }
 
-        await using var stream = File.Create(FilePath);
-        await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+        var temporaryPath = $"{FilePath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                4096,
+                FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+
+            File.Move(temporaryPath, FilePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
     }
 }
